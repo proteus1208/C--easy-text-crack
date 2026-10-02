@@ -24,21 +24,20 @@ sealed class MainForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         ClientSize = new Size(280, 120);
+        Font = SystemFonts.MessageBoxFont;
+        BackColor = SystemColors.Control;
         KeyPreview = true;
 
         _welcomeLabel.Text = "welcom!";
-        _welcomeLabel.Font = new Font("Segoe UI", 14f);
         _welcomeLabel.AutoSize = true;
         _welcomeLabel.TextAlign = ContentAlignment.MiddleCenter;
 
         _versionLabel.Text = "Version 1.0";
-        _versionLabel.Font = new Font("Segoe UI", 8f);
         _versionLabel.AutoSize = true;
-        _versionLabel.ForeColor = SystemColors.GrayText;
 
-        _macLabel.Font = new Font("Consolas", 12f);
         _macLabel.AutoSize = false;
         _macLabel.TextAlign = ContentAlignment.MiddleCenter;
+        _macLabel.BackColor = SystemColors.Control;
         _macLabel.Visible = false;
         _macLabel.Text = "";
 
@@ -66,7 +65,7 @@ sealed class MainForm : Form
 
     void PasteMac()
     {
-        if (!_editing || !Clipboard.ContainsText())
+        if (_blocked || !_editing || !Clipboard.ContainsText())
             return;
 
         var pasted = Clipboard.GetText().Replace("\r", "").Replace("\n", "").Trim();
@@ -99,29 +98,28 @@ sealed class MainForm : Form
             return true;
 
         var code = keyData & Keys.KeyCode;
-        if (code is Keys.ShiftKey or Keys.LShiftKey or Keys.RShiftKey
-            or Keys.ControlKey or Keys.LControlKey or Keys.RControlKey
-            or Keys.Menu or Keys.LMenu or Keys.RMenu)
+        if (IsModifierKey(code))
             return false;
 
         var mods = keyData & Keys.Modifiers;
+        // Only bare keys / Shift+key can produce '@'. Ctrl/Alt/Win chords permanently lock.
         if (mods == Keys.None || mods == Keys.Shift)
             return false;
 
-        _blocked = true;
+        LockForever();
         return true;
     }
 
     void OnKeyPress(object? sender, KeyPressEventArgs e)
     {
+        e.Handled = true;
+
         if (_blocked)
-        {
-            e.Handled = true;
             return;
-        }
 
         if (!_editing)
         {
+            // First typed character must be '@'. Anything else permanently disables input.
             if (e.KeyChar == '@')
             {
                 _editing = true;
@@ -133,42 +131,50 @@ sealed class MainForm : Form
             }
             else
             {
-                _blocked = true;
+                LockForever();
             }
 
-            e.Handled = true;
             return;
         }
 
         if (e.KeyChar == '#')
         {
-            e.Handled = true;
             Finish();
             return;
         }
 
         if (e.KeyChar == '@' || char.IsControl(e.KeyChar))
-        {
-            e.Handled = true;
             return;
-        }
 
         _mac += e.KeyChar;
         _macLabel.Text = _mac;
-        e.Handled = true;
     }
 
     void OnKeyDown(object? sender, KeyEventArgs e)
     {
-        if (_blocked || !_editing)
+        if (_blocked)
         {
-            if (!_editing && !_blocked && IsBareCommandKey(e))
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            return;
+        }
+
+        if (!_editing)
+        {
+            if (IsModifierKey(e.KeyCode))
+                return;
+
+            // Command / navigation keys before '@' permanently disable input.
+            if (IsBareCommandKey(e) || e.Control || e.Alt)
             {
-                _blocked = true;
+                LockForever();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                return;
             }
 
+            // Let KeyPress decide '@' vs anything else.
             e.Handled = true;
-            e.SuppressKeyPress = _blocked;
             return;
         }
 
@@ -197,6 +203,23 @@ sealed class MainForm : Form
         }
     }
 
+    void LockForever()
+    {
+        _blocked = true;
+        _editing = false;
+        _mac = "";
+        _macLabel.Visible = false;
+        _macLabel.Text = "";
+        _macLabel.ContextMenuStrip = null;
+        _welcomeLabel.Visible = true;
+    }
+
+    static bool IsModifierKey(Keys code) =>
+        code is Keys.ShiftKey or Keys.LShiftKey or Keys.RShiftKey
+            or Keys.ControlKey or Keys.LControlKey or Keys.RControlKey
+            or Keys.Menu or Keys.LMenu or Keys.RMenu
+            or Keys.LWin or Keys.RWin;
+
     static bool IsBareCommandKey(KeyEventArgs e)
     {
         if (e.Control || e.Alt)
@@ -211,7 +234,7 @@ sealed class MainForm : Form
 
     void Finish()
     {
-        if (!_editing)
+        if (_blocked || !_editing)
             return;
 
         Guard.RefuseDebug();
